@@ -4,286 +4,271 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Nivel Digital Pro</title>
+    <!-- Tailwind CSS para los estilos de la interfaz -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             margin: 0;
             padding: 0;
+            /* Evitar scroll y rebote en celulares */
             overflow: hidden;
-            background-color: #000; /* Fondo negro puro */
-            touch-action: none;
+            touch-action: none; 
             user-select: none;
-            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-user-select: none;
+            background-color: #000000; /* Fondo negro base */
+            font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
         canvas {
             display: block;
             width: 100vw;
             height: 100vh;
         }
-        /* Animación para el botón de inicio */
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+        /* Efecto de pulso para llamar la atención del usuario */
+        @keyframes pulse-btn {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(234, 179, 8, 0.5); }
+            50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(234, 179, 8, 0.8); }
         }
-        .btn-pulse {
-            animation: pulse 2s infinite;
+        .btn-massive {
+            animation: pulse-btn 2s infinite;
         }
     </style>
 </head>
 <body>
 
-    <!-- Overlay de Permisos (Obligatorio para iOS y navegadores modernos) -->
-    <div id="overlay" class="absolute inset-0 z-50 flex flex-col items-center justify-start pt-12 sm:pt-20 bg-black/95 backdrop-blur-md px-4">
-        <div class="bg-gray-900 border-2 border-yellow-500 rounded-3xl p-6 max-w-md w-full text-center shadow-[0_0_50px_rgba(234,179,8,0.3)]">
-            <div class="w-16 h-16 mx-auto bg-yellow-500/20 rounded-full flex items-center justify-center mb-4">
-                <svg class="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <!-- OVERLAY DE INICIO (z-index altísimo para que SIEMPRE esté arriba) -->
+    <!-- Centrado perfecto usando flexbox para garantizar que se vea en cualquier pantalla -->
+    <div id="overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black px-6">
+        
+        <div class="text-center w-full max-w-md">
+            <!-- Icono de advertencia -->
+            <div class="w-24 h-24 mx-auto bg-yellow-500/20 rounded-full flex items-center justify-center mb-6">
+                <svg class="w-12 h-12 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                 </svg>
             </div>
-            <h1 class="text-3xl font-black text-white mb-2 uppercase">Atención</h1>
-            <p class="text-gray-300 text-base mb-8 font-medium">Debes activar los sensores de movimiento de tu celular para poder usar el nivel.</p>
-            <button id="startBtn" class="btn-pulse w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-3xl py-8 px-4 rounded-2xl transition-colors shadow-2xl shadow-yellow-400/50 uppercase tracking-widest border-4 border-yellow-200">
-                INICIAR
+            
+            <h1 class="text-4xl font-black text-white mb-4 uppercase tracking-wider">Permisos</h1>
+            <p class="text-gray-300 text-lg mb-10 font-medium">Activa los sensores de tu teléfono para usar el nivelador.</p>
+            
+            <!-- Botón amarillo masivo y de alto contraste -->
+            <button id="startBtn" class="btn-massive w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-4xl py-10 px-4 rounded-3xl transition-colors uppercase tracking-widest border-4 border-yellow-200">
+                INICIAR NIVEL
             </button>
         </div>
+        
     </div>
 
-    <!-- Lienzo donde se dibuja todo el nivel -->
+    <!-- LIENZO DEL NIVEL (Canvas) -->
     <canvas id="canvas"></canvas>
 
     <script>
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const overlay = document.getElementById('overlay');
-        const startBtn = document.getElementById('startBtn');
+        // Lógica principal de la aplicación
+        window.onload = function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const overlay = document.getElementById('overlay');
+            const startBtn = document.getElementById('startBtn');
 
-        // Variables de dimensiones
-        let width, height, cx, cy, maxDim;
+            let width, height, cx, cy, maxDim;
+            let targetBeta = 0;
+            let targetGamma = 0;
+            let smoothBeta = 0;
+            let smoothGamma = 0;
 
-        // Variables de sensores (Suavizadas para movimiento fluido)
-        let targetBeta = 0; // Inclinación adelante/atrás
-        let targetGamma = 0; // Inclinación izquierda/derecha
-        let smoothBeta = 0;
-        let smoothGamma = 0;
+            // Colores del nivel
+            const COLOR_BG = '#000000'; // Fondo Negro
+            const COLOR_LEVEL = '#22c55e'; // Verde Brillante
+            const COLOR_LIQUID = '#0ea5e9'; // Azul Líquido
 
-        // Colores temáticos
-        const COLOR_BG_DARK = '#000000';
-        const COLOR_LIQUID_BLUE = '#0ea5e9'; // Azul Tailwind sky-500
-        const COLOR_PERFECT_GREEN = '#22c55e'; // Verde brillante Tailwind green-500
-
-        // Redimensionar el canvas para que ocupe toda la pantalla con alta resolución
-        function resize() {
-            width = window.innerWidth;
-            height = window.innerHeight;
-            canvas.width = width * window.devicePixelRatio;
-            canvas.height = height * window.devicePixelRatio;
-            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-            cx = width / 2;
-            cy = height / 2;
-            maxDim = Math.max(width, height);
-        }
-        window.addEventListener('resize', resize);
-        resize();
-
-        // Capturar datos del giroscopio/acelerómetro
-        function handleOrientation(event) {
-            // Manejar valores nulos (dispositivos sin sensores)
-            targetBeta = event.beta || 0; 
-            targetGamma = event.gamma || 0;
-            
-            // Ajustar según la rotación de la pantalla si el usuario voltea el celular
-            let orientation = window.orientation || 0;
-            if (orientation === 90) {
-                let temp = targetBeta;
-                targetBeta = -targetGamma;
-                targetGamma = temp;
-            } else if (orientation === -90) {
-                let temp = targetBeta;
-                targetBeta = targetGamma;
-                targetGamma = -temp;
+            // Ajuste de tamaño de pantalla
+            function resize() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width * window.devicePixelRatio;
+                canvas.height = height * window.devicePixelRatio;
+                ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+                cx = width / 2;
+                cy = height / 2;
+                maxDim = Math.max(width, height);
             }
-        }
+            window.addEventListener('resize', resize);
+            resize(); // Llamada inicial
 
-        // Solicitar permisos e iniciar
-        startBtn.addEventListener('click', () => {
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            window.addEventListener('deviceorientation', handleOrientation, true);
-                            overlay.style.display = 'none';
-                            loop();
-                        } else {
-                            alert("Permiso denegado. No se puede usar el nivel.");
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                // Android y navegadores estándar
-                window.addEventListener('deviceorientation', handleOrientation, true);
-                overlay.style.display = 'none';
-                loop();
-            }
-        });
-
-        // Bucle de dibujo (Animation Loop)
-        function loop() {
-            requestAnimationFrame(loop);
-
-            // Interpolación lineal (LERP) para movimiento súper fluido (efecto líquido)
-            smoothBeta += (targetBeta - smoothBeta) * 0.15;
-            smoothGamma += (targetGamma - smoothGamma) * 0.15;
-
-            // Determinar Modo de vista
-            let mode = 'flat';
-            if (Math.abs(smoothBeta) > 45 && Math.abs(smoothGamma) < 45) {
-                mode = 'portrait';
-            } else if (Math.abs(smoothGamma) >= 45) {
-                mode = 'landscape';
-            }
-
-            ctx.clearRect(0, 0, width, height);
-
-            if (mode === 'flat') {
-                drawFlatMode();
-            } else {
-                drawEdgeMode(mode);
-            }
-        }
-
-        // --- MODO 1: PLANO (Sobre la mesa) ---
-        function drawFlatMode() {
-            let pitch = smoothBeta; // Eje Arriba/Abajo
-            let roll = smoothGamma; // Eje Izquierda/Derecha
-            
-            // Es perfectamente plano si ambos ángulos están entre -0.5 y 0.5
-            let isLevel = Math.abs(pitch) <= 0.5 && Math.abs(roll) <= 0.5;
-
-            // Fondo (Negro normal, Verde si está nivelado)
-            ctx.fillStyle = isLevel ? COLOR_PERFECT_GREEN : COLOR_BG_DARK;
-            ctx.fillRect(0, 0, width, height);
-
-            // Dibujar cruz de guías
-            ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.2)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(cx, 0); ctx.lineTo(cx, height);
-            ctx.moveTo(0, cy); ctx.lineTo(width, cy);
-            ctx.stroke();
-
-            // Círculo fijo (Objetivo)
-            const radius = 70;
-            ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Calcular posición de la burbuja en movimiento
-            // Limitamos el movimiento al borde de la pantalla para que no se pierda
-            let maxDist = Math.min(cx, cy) - radius;
-            let scale = maxDist / 30; // Sensibilidad
-            let dx = roll * scale;
-            let dy = pitch * scale;
-
-            // Burbuja móvil
-            ctx.fillStyle = isLevel ? 'rgba(0,0,0,0.8)' : COLOR_LIQUID_BLUE;
-            ctx.beginPath();
-            ctx.arc(cx + dx, cy + dy, radius, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Dibujar Textos
-            ctx.fillStyle = isLevel ? '#000000' : '#ffffff';
-            ctx.font = '300 42px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-
-            let pitchStr = Math.abs(pitch) < 0.1 ? '0.0' : pitch.toFixed(1);
-            let rollStr = Math.abs(roll) < 0.1 ? '0.0' : roll.toFixed(1);
-
-            // Texto Arriba (Pitch)
-            ctx.font = '24px sans-serif';
-            ctx.fillText(`^`, cx, cy - 160);
-            ctx.font = '300 42px sans-serif';
-            ctx.fillText(`${pitchStr}°`, cx, cy - 120);
-            ctx.font = '24px sans-serif';
-            ctx.fillText(`v`, cx, cy - 80);
-
-            // Texto Abajo (Roll)
-            ctx.font = '300 42px sans-serif';
-            ctx.fillText(`< ${rollStr}° >`, cx, cy + 120);
-        }
-
-        // --- MODOS 2 y 3: BORDE (Vertical o Horizontal) ---
-        function drawEdgeMode(mode) {
-            // Seleccionamos qué ángulo importa según cómo se sostenga
-            let angle = (mode === 'portrait') ? smoothGamma : smoothBeta;
-            
-            // Es nivelado si el ángulo está entre -0.5 y 0.5
-            let isLevel = Math.abs(angle) <= 0.5;
-
-            // Fondo base
-            ctx.fillStyle = isLevel ? COLOR_PERFECT_GREEN : COLOR_BG_DARK;
-            ctx.fillRect(0, 0, width, height);
-
-            if (!isLevel) {
-                ctx.save();
-                ctx.translate(cx, cy);
+            // Capturar datos del sensor
+            function handleOrientation(event) {
+                targetBeta = event.beta || 0; 
+                targetGamma = event.gamma || 0;
                 
-                // Rotar el "líquido" para que actúe con gravedad
-                // El signo negativo hace que gire en contra de la inclinación
-                ctx.rotate(-angle * Math.PI / 180);
-                
-                // Dibujar el líquido azul (cubre toda la mitad inferior)
-                ctx.fillStyle = COLOR_LIQUID_BLUE;
-                // Dibujamos un rectángulo enorme que cubra la pantalla incluso rotada
-                ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
-                
-                // Dibujar la línea del horizonte
-                ctx.strokeStyle = '#000000';
-                ctx.lineWidth = 3;
+                let orientation = window.orientation || 0;
+                if (orientation === 90) {
+                    let temp = targetBeta;
+                    targetBeta = -targetGamma;
+                    targetGamma = temp;
+                } else if (orientation === -90) {
+                    let temp = targetBeta;
+                    targetBeta = targetGamma;
+                    targetGamma = -temp;
+                }
+            }
+
+            // Iniciar sensores al hacer clic en el botón masivo
+            startBtn.addEventListener('click', () => {
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    // iPhone / iOS 13+
+                    DeviceOrientationEvent.requestPermission()
+                        .then(permissionState => {
+                            if (permissionState === 'granted') {
+                                window.addEventListener('deviceorientation', handleOrientation, true);
+                                overlay.style.display = 'none';
+                                loop();
+                            } else {
+                                alert("Permiso denegado. Se requieren los sensores.");
+                            }
+                        })
+                        .catch(console.error);
+                } else {
+                    // Android / Otros
+                    window.addEventListener('deviceorientation', handleOrientation, true);
+                    overlay.style.display = 'none';
+                    loop();
+                }
+            });
+
+            // Motor de animación (Game Loop)
+            function loop() {
+                requestAnimationFrame(loop);
+
+                // Suavizado del movimiento
+                smoothBeta += (targetBeta - smoothBeta) * 0.15;
+                smoothGamma += (targetGamma - smoothGamma) * 0.15;
+
+                // Lógica para detectar si está de lado o acostado
+                let mode = 'flat';
+                if (Math.abs(smoothBeta) > 45 && Math.abs(smoothGamma) < 45) {
+                    mode = 'portrait';
+                } else if (Math.abs(smoothGamma) >= 45) {
+                    mode = 'landscape';
+                }
+
+                // Limpiar pantalla
+                ctx.clearRect(0, 0, width, height);
+
+                if (mode === 'flat') {
+                    drawFlatMode(smoothBeta, smoothGamma);
+                } else {
+                    drawEdgeMode(mode, smoothBeta, smoothGamma);
+                }
+            }
+
+            // DIBUJAR: Teléfono acostado sobre la mesa
+            function drawFlatMode(pitch, roll) {
+                let isLevel = Math.abs(pitch) <= 1.0 && Math.abs(roll) <= 1.0;
+
+                // Fondo
+                ctx.fillStyle = isLevel ? COLOR_LEVEL : COLOR_BG;
+                ctx.fillRect(0, 0, width, height);
+
+                // Guías (Cruz central)
+                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(-maxDim, 0);
-                ctx.lineTo(maxDim, 0);
+                ctx.moveTo(cx, 0); ctx.lineTo(cx, height);
+                ctx.moveTo(0, cy); ctx.lineTo(width, cy);
                 ctx.stroke();
 
-                ctx.restore();
+                // Círculo objetivo
+                const radius = 80;
+                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Burbuja / Líquido central
+                let maxDist = Math.min(cx, cy) - radius;
+                let scale = maxDist / 30; 
+                let dx = roll * scale;
+                let dy = pitch * scale;
+
+                ctx.fillStyle = isLevel ? 'rgba(0,0,0,0.8)' : COLOR_LIQUID;
+                ctx.beginPath();
+                ctx.arc(cx + dx, cy + dy, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Textos de grados
+                ctx.fillStyle = isLevel ? '#000000' : '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                let pStr = Math.abs(pitch) < 0.1 ? '0.0' : pitch.toFixed(1);
+                let rStr = Math.abs(roll) < 0.1 ? '0.0' : roll.toFixed(1);
+
+                ctx.font = '24px sans-serif';
+                ctx.fillText(`^`, cx, cy - 180);
+                ctx.font = '300 48px sans-serif';
+                ctx.fillText(`${pStr}°`, cx, cy - 130);
+                ctx.font = '24px sans-serif';
+                ctx.fillText(`v`, cx, cy - 90);
+
+                ctx.font = '300 48px sans-serif';
+                ctx.fillText(`< ${rStr}° >`, cx, cy + 130);
             }
 
-            // Marcas guía estáticas en los bordes
-            ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(cx, 0); ctx.lineTo(cx, 30); // Top
-            ctx.moveTo(cx, height); ctx.lineTo(cx, height - 30); // Bottom
-            ctx.moveTo(0, cy); ctx.lineTo(30, cy); // Left
-            ctx.moveTo(width, cy); ctx.lineTo(width - 30, cy); // Right
-            ctx.stroke();
+            // DIBUJAR: Teléfono levantado de lado (Vertical/Horizontal)
+            function drawEdgeMode(mode, pitch, roll) {
+                let angle = (mode === 'portrait') ? roll : pitch;
+                let isLevel = Math.abs(angle) <= 1.0;
 
-            // Texto Central
-            ctx.fillStyle = isLevel ? '#000000' : COLOR_LIQUID_BLUE;
-            if (isLevel) {
-                 // Si es nivelado y el fondo es verde, letras negras para contraste
-                 ctx.fillStyle = '#000000';
-            } else {
-                 // Texto azul claro para contrastar sobre negro/azul
-                 ctx.fillStyle = '#38bdf8'; 
+                ctx.fillStyle = isLevel ? COLOR_LEVEL : COLOR_BG;
+                ctx.fillRect(0, 0, width, height);
+
+                if (!isLevel) {
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    // Rotar la pantalla para crear el horizonte
+                    ctx.rotate(-angle * Math.PI / 180);
+                    
+                    // Líquido azul abajo
+                    ctx.fillStyle = COLOR_LIQUID;
+                    ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
+                    
+                    // Línea negra del horizonte
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(-maxDim, 0);
+                    ctx.lineTo(maxDim, 0);
+                    ctx.stroke();
+
+                    ctx.restore();
+                }
+
+                // Marcas en los bordes
+                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(cx, 0); ctx.lineTo(cx, 40); 
+                ctx.moveTo(cx, height); ctx.lineTo(cx, height - 40);
+                ctx.moveTo(0, cy); ctx.lineTo(40, cy); 
+                ctx.moveTo(width, cy); ctx.lineTo(width - 40, cy); 
+                ctx.stroke();
+
+                // Texto Central de grados
+                ctx.fillStyle = isLevel ? '#000000' : '#38bdf8'; 
+                ctx.font = '300 80px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                let angleStr = Math.abs(angle) < 0.1 ? '0.0' : angle.toFixed(1);
+                
+                if (!isLevel) {
+                    ctx.shadowColor = "rgba(0,0,0,0.9)";
+                    ctx.shadowBlur = 15;
+                }
+                ctx.fillText(`${angleStr}°`, cx, cy - 100);
+                ctx.shadowBlur = 0; 
             }
-            
-            ctx.font = '300 72px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            let angleStr = Math.abs(angle) < 0.1 ? '0.0' : angle.toFixed(1);
-            
-            // Pequeña sombra para legibilidad cuando se superpone con la línea
-            if (!isLevel) {
-                ctx.shadowColor = "rgba(0,0,0,0.8)";
-                ctx.shadowBlur = 10;
-            }
-            ctx.fillText(`${angleStr}°`, cx, cy - 80);
-            ctx.shadowBlur = 0; // Resetear sombra
-        }
+        };
     </script>
 </body>
 </html>
