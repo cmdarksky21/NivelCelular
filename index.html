@@ -36,7 +36,7 @@
     <div id="overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black px-4">
         <div class="text-center w-full h-full flex flex-col justify-center max-w-lg mx-auto">
             <h1 class="text-5xl font-black text-white mb-6 uppercase tracking-wider">Nivel Pro</h1>
-            <p class="text-gray-300 text-xl mb-12 font-medium px-4">Haz clic en el botón para activar los sensores de gravedad y comenzar a nivelar.</p>
+            <p class="text-gray-300 text-xl mb-12 font-medium px-4">Haz clic en el botón para activar los sensores y nivelar.</p>
             
             <button id="startBtn" class="btn-massive w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-5xl py-12 rounded-[2.5rem] transition-colors uppercase tracking-widest border-8 border-yellow-200 shadow-2xl">
                 INICIAR<br>NIVEL
@@ -56,20 +56,50 @@
 
             let width, height, cx, cy, maxDim;
 
-            // Variables de gravedad (aceleración pura)
+            // Variables de gravedad física cruda
             let rawX = 0, rawY = 0, rawZ = 9.8; 
-            let smoothX = 0, smoothY = 0, smoothZ = 9.8;
+            let smoothRawX = 0, smoothRawY = -9.8, smoothRawZ = 9.8;
 
-            // Filtro de paso bajo (Low-Pass Filter). Valores más pequeños = más suavizado.
+            // Filtro de paso bajo (Low-Pass Filter) para suavizar
             const LPF_ALPHA = 0.15; 
 
-            // Colores temáticos
-            const COLOR_BG = '#0f172a'; // Slate 900
-            const COLOR_LIQUID = '#0ea5e9'; // Bright Blue (Sky 500)
-            const COLOR_TEXT_GOOD = '#22c55e'; // Green 500
-            const COLOR_TEXT_BAD = '#ef4444'; // Red 500
+            // Variables para el desenvolvimiento de ángulos infinitos y rotación
+            let currentOrientation = getOrientation();
+            let orientationOffset = currentOrientation; // Se inicializa con la rotación inicial del celular
+            let unwrappedScreenAngle = 0;
+            let prevRawScreenAngle = null;
 
-            // Ajustar el Canvas al tamaño de la pantalla
+            // Colores temáticos exactos al video
+            const COLOR_BG = '#0f172a'; // Slate 900
+            const COLOR_LIQUID = '#0ea5e9'; // Azul claro
+            const COLOR_TEXT_GOOD = '#22c55e'; // Verde para nivelado
+            const COLOR_TEXT_BAD = '#ef4444'; // Rojo para desnivelado
+
+            function getOrientation() {
+                // Obtiene la rotación actual de la pantalla en grados (0, 90, -90, 180)
+                if (screen.orientation && screen.orientation.angle !== undefined) {
+                    let angle = screen.orientation.angle;
+                    if (angle === 270) return -90;
+                    return angle;
+                }
+                return window.orientation || 0;
+            }
+
+            // Escuchar cuando el navegador gira la pantalla automáticamente
+            window.addEventListener('orientationchange', () => {
+                let newOrientation = getOrientation();
+                let delta = newOrientation - currentOrientation;
+                
+                // Normalizar el salto de rotación
+                if (delta > 180) delta -= 360;
+                if (delta < -180) delta += 360;
+                
+                // Sumar el giro del navegador a nuestro desfase para que el ángulo no se reinicie
+                orientationOffset += delta;
+                currentOrientation = newOrientation;
+                resize();
+            });
+
             function resize() {
                 width = window.innerWidth;
                 height = window.innerHeight;
@@ -78,18 +108,17 @@
                 ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
                 cx = width / 2;
                 cy = height / 2;
-                maxDim = Math.max(width, height) * 1.5; // Suficiente para rotar sin esquinas cortadas
+                maxDim = Math.max(width, height) * 1.5; 
             }
             window.addEventListener('resize', resize);
             resize();
 
-            // LECTOR DE GRAVEDAD DIRECTO (Evita Gimbal Lock)
+            // Lector de Gravedad
             function handleMotion(event) {
                 let acc = event.accelerationIncludingGravity;
                 if (!acc) return;
                 
-                // Mapear los ejes. Diferentes SO pueden invertir la Y, 
-                // pero por lo general, con el teléfono vertical X es izq/der, Y es arriba/abajo, Z es profundidad.
+                // Guardamos los valores crudos del hardware físico
                 rawX = acc.x || 0;
                 rawY = acc.y || 0;
                 rawZ = acc.z || 0;
@@ -101,7 +130,6 @@
                 requestAnimationFrame(loop);
             }
 
-            // Iniciar aplicación (Solicita permisos DeviceMotion en iOS)
             startBtn.addEventListener('click', () => {
                 if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
                     DeviceMotionEvent.requestPermission()
@@ -118,41 +146,120 @@
                 }
             });
 
-            // Bucle principal de renderizado
+            // Motor principal de renderizado
             function loop() {
-                // Aplicar Filtro de Paso Bajo (Low-Pass Filter) para suavizar temblores
-                smoothX += (rawX - smoothX) * LPF_ALPHA;
-                smoothY += (rawY - smoothY) * LPF_ALPHA;
-                smoothZ += (rawZ - smoothZ) * LPF_ALPHA;
+                // 1. Suavizamos los datos crudos del hardware
+                smoothRawX += (rawX - smoothRawX) * LPF_ALPHA;
+                smoothRawY += (rawY - smoothRawY) * LPF_ALPHA;
+                smoothRawZ += (rawZ - smoothRawZ) * LPF_ALPHA;
+
+                // 2. Mapear los ejes físicos a la rotación actual de la pantalla
+                let sx, sy;
+                if (currentOrientation === 90) {
+                    sx = -smoothRawY; sy = smoothRawX;
+                } else if (currentOrientation === -90) {
+                    sx = smoothRawY; sy = -smoothRawX;
+                } else if (currentOrientation === 180) {
+                    sx = -smoothRawX; sy = -smoothRawY;
+                } else {
+                    sx = smoothRawX; sy = smoothRawY;
+                }
 
                 ctx.clearRect(0, 0, width, height);
 
-                // Determinar el modo: Si la fuerza G en Z es fuerte (> 8 m/s^2), el teléfono está apoyado en una mesa
-                let isFlat = Math.abs(smoothZ) > 8.0;
+                // Si la gravedad jala fuerte en Z, el celular está acostado (Modo Burbuja)
+                let isFlat = Math.abs(smoothRawZ) > 8.0;
 
                 if (isFlat) {
-                    drawFlatMode();
+                    drawFlatMode(sx, sy);
                 } else {
-                    drawEdgeMode();
+                    drawEdgeMode(sx, sy);
                 }
 
                 requestAnimationFrame(loop);
             }
 
-            // MODO BURBUJA (Acostado)
-            function drawFlatMode() {
-                // La perfección se mide en cuán cerca están X e Y de 0.
-                let tiltX = smoothX;
-                let tiltY = -smoothY; // Invertimos Y para que la burbuja se mueva lógicamente
+            function drawEdgeMode(sx, sy) {
+                // Calcular ángulo en base a los ejes de la pantalla
+                // Usamos -sy porque la gravedad jala hacia abajo (negativo) cuando está derecho
+                let rawScreenAngle = Math.atan2(sx, -sy) * 180 / Math.PI;
 
-                let exactnessThreshold = 0.3; // Tolerancia en m/s^2
-                let isLevel = Math.abs(tiltX) < exactnessThreshold && Math.abs(tiltY) < exactnessThreshold;
+                // SISTEMA DE DESENVOLVIMIENTO (Memoria Infinita 360, 720, etc)
+                if (prevRawScreenAngle === null) {
+                    unwrappedScreenAngle = rawScreenAngle;
+                } else {
+                    let delta = rawScreenAngle - prevRawScreenAngle;
+                    // Evitar el salto de -180 a 180
+                    if (delta > 180) delta -= 360;
+                    if (delta < -180) delta += 360;
+                    unwrappedScreenAngle += delta;
+                }
+                prevRawScreenAngle = rawScreenAngle;
 
-                // Fondo negro
+                // El ángulo final mostrado es el ángulo infinito menos el giro que haya hecho el navegador
+                let displayAngle = unwrappedScreenAngle - orientationOffset;
+
+                // Lógica de "Perfección" para el color verde
+                // Comprobamos si está cerca de 0, 90, 180, 270, 360...
+                let isLevel = Math.abs(Math.round(displayAngle / 90) * 90 - displayAngle) < 0.15;
+
+                // Renderizar Fondo
                 ctx.fillStyle = COLOR_BG;
                 ctx.fillRect(0, 0, width, height);
 
-                // Cruz central
+                // Dibujar Líquido con rotación directa a la pantalla
+                ctx.save();
+                ctx.translate(cx, cy);
+                
+                // Rotar el canvas (positivo es horario, hace que el agua se incline con la gravedad)
+                ctx.rotate(rawScreenAngle * Math.PI / 180);
+                
+                ctx.fillStyle = COLOR_LIQUID;
+                ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
+                
+                // Línea blanca del horizonte
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(-maxDim, 0);
+                ctx.lineTo(maxDim, 0);
+                ctx.stroke();
+
+                ctx.restore();
+
+                // Ticks marcadores estáticos de precisión
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, cy); ctx.lineTo(60, cy); // Borde izq
+                ctx.moveTo(width, cy); ctx.lineTo(width - 60, cy); // Borde der
+                ctx.stroke();
+
+                // Formatear texto
+                let textAngle = displayAngle.toFixed(1);
+                // Evitar que diga "-0.0"
+                if (textAngle === "-0.0") textAngle = "0.0";
+
+                // Dibujar Texto del Ángulo
+                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD; 
+                ctx.font = '300 110px sans-serif'; // Fuente gigante y fina como en el video
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                ctx.fillText(`${textAngle}°`, cx, cy - 140);
+            }
+
+            // Modo Acostado (Mesa)
+            function drawFlatMode(sx, sy) {
+                let tiltX = sx;
+                let tiltY = -sy; 
+
+                let exactnessThreshold = 0.3; 
+                let isLevel = Math.abs(tiltX) < exactnessThreshold && Math.abs(tiltY) < exactnessThreshold;
+
+                ctx.fillStyle = COLOR_BG;
+                ctx.fillRect(0, 0, width, height);
+
                 ctx.strokeStyle = 'rgba(255,255,255,0.2)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -160,7 +267,6 @@
                 ctx.moveTo(0, cy); ctx.lineTo(width, cy);
                 ctx.stroke();
 
-                // Círculos objetivo
                 const targetRadius = 60;
                 ctx.strokeStyle = isLevel ? COLOR_TEXT_GOOD : 'rgba(255,255,255,0.6)';
                 ctx.lineWidth = 4;
@@ -171,9 +277,7 @@
                 ctx.arc(cx, cy, targetRadius * 2.5, 0, Math.PI * 2);
                 ctx.stroke();
 
-                // Burbuja Líquida
                 let maxMove = Math.min(cx, cy) - targetRadius;
-                // Multiplicador de sensibilidad (gravedad máx esperada en ejes paralelos es ~2 cuando está plano)
                 let sensitivity = maxMove / 2.5; 
                 
                 let dx = tiltX * sensitivity;
@@ -184,95 +288,19 @@
                 ctx.arc(cx + dx, cy + dy, targetRadius * 0.8, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Texto Central 
                 ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD;
                 ctx.font = '300 48px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 
-                // Mostrar ángulo en grados como referencia
-                let pitch = Math.atan2(smoothY, Math.abs(smoothZ)) * 180 / Math.PI;
-                let roll = Math.atan2(smoothX, Math.abs(smoothZ)) * 180 / Math.PI;
-                let combinedErr = Math.sqrt(pitch*pitch + roll*roll);
-                
-                let displayAngle = combinedErr.toFixed(1);
+                let combinedErr = Math.sqrt(sx*sx + sy*sy);
+                let displayAngle = (combinedErr * 5).toFixed(1); // Escala para mostrar grados aprox
                 if (combinedErr < 0.1) displayAngle = "0.0";
                 
                 ctx.fillText(`${displayAngle}°`, cx, cy - targetRadius - 40);
                 
-                // Mostrar exactitud
                 ctx.font = '700 24px sans-serif';
-                ctx.fillText(isLevel ? "NIVELADO" : "DESNIVELADO", cx, cy + targetRadius + 50);
-            }
-
-            // MODO LÍQUIDO (De pie / De lado)
-            function drawEdgeMode() {
-                // Cálculo de horizonte perfecto usando Atan2 de los ejes Y y X (Vectores 2D de gravedad).
-                // Al ser vectores continuos, elimina completamente el problema de Gimbal Lock (saltos a 90/180).
-                let angleRad = Math.atan2(smoothX, smoothY); 
-                let angleDeg = angleRad * (180 / Math.PI);
-
-                // Calcular la desviación con respecto al ángulo de 90 grados más cercano
-                let nearestSnap = Math.round(angleDeg / 90) * 90;
-                let deviation = angleDeg - nearestSnap;
-                
-                // Está nivelado si el margen de error es menor a 0.5 grados
-                let isLevel = Math.abs(deviation) < 0.5;
-
-                // Fondo oscuro
-                ctx.fillStyle = COLOR_BG;
-                ctx.fillRect(0, 0, width, height);
-
-                ctx.save();
-                ctx.translate(cx, cy);
-                
-                // Rotar el canvas basándose en la dirección pura de la gravedad
-                ctx.rotate(angleRad);
-                
-                // Dibujar Líquido Azul gigante
-                ctx.fillStyle = COLOR_LIQUID;
-                ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
-                
-                // Dibujar Línea del horizonte (borde del líquido)
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(-maxDim, 0);
-                ctx.lineTo(maxDim, 0);
-                ctx.stroke();
-
-                ctx.restore();
-
-                // Ticks marcadores estáticos en la pantalla
-                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(cx - 30, cy); ctx.lineTo(cx + 30, cy); // Centro
-                ctx.moveTo(0, cy); ctx.lineTo(40, cy); // Borde izq
-                ctx.moveTo(width, cy); ctx.lineTo(width - 40, cy); // Borde der
-                ctx.moveTo(cx, 0); ctx.lineTo(cx, 40); // Borde sup
-                ctx.moveTo(cx, height); ctx.lineTo(cx, height - 40); // Borde inf
-                ctx.stroke();
-
-                // Formatear texto (Evitar -0.0)
-                let displayAngle = deviation.toFixed(1);
-                if (Math.abs(deviation) < 0.1) displayAngle = "0.0";
-
-                // Renderizar Texto Flotante (Verde si exacto, Rojo si inexacto)
-                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD; 
-                ctx.font = '300 96px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                ctx.shadowColor = "rgba(0,0,0,0.8)";
-                ctx.shadowBlur = 15;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 4;
-                
-                ctx.fillText(`${displayAngle}°`, cx, cy - 120);
-                ctx.shadowBlur = 0; 
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
+                ctx.fillText(isLevel ? "0.0°" : "MESA", cx, cy + targetRadius + 50);
             }
         };
     </script>
