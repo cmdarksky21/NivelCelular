@@ -3,19 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Nivel Digital Pro</title>
-    <!-- Tailwind CSS -->
+    <title>Nivel Celular Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             margin: 0;
             padding: 0;
-            /* Evitar scroll y comportamientos táctiles por defecto */
             overflow: hidden;
             touch-action: none; 
             user-select: none;
             -webkit-user-select: none;
-            background-color: #000000;
+            background-color: #0f172a; /* Fondo oscuro */
             font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
         }
         canvas {
@@ -24,30 +22,24 @@
             height: 100vh;
         }
         @keyframes pulse-btn {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(234, 179, 8, 0.5); }
-            50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(234, 179, 8, 0.8); }
+            0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(250, 204, 21, 0.6); }
+            50% { transform: scale(1.03); box-shadow: 0 0 60px rgba(250, 204, 21, 0.9); }
         }
         .btn-massive {
-            animation: pulse-btn 2s infinite;
+            animation: pulse-btn 1.5s infinite;
         }
     </style>
 </head>
 <body>
 
-    <!-- OVERLAY DE INICIO (Masivo, Amarillo y Centrado) -->
-    <div id="overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black px-6">
-        <div class="text-center w-full max-w-md">
-            <div class="w-24 h-24 mx-auto bg-yellow-500/20 rounded-full flex items-center justify-center mb-6">
-                <svg class="w-12 h-12 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-                </svg>
-            </div>
+    <!-- OVERLAY DE INICIO (Botón Amarillo Masivo para Permisos) -->
+    <div id="overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black px-4">
+        <div class="text-center w-full h-full flex flex-col justify-center max-w-lg mx-auto">
+            <h1 class="text-5xl font-black text-white mb-6 uppercase tracking-wider">Nivel Pro</h1>
+            <p class="text-gray-300 text-xl mb-12 font-medium px-4">Haz clic en el botón para activar los sensores de gravedad y comenzar a nivelar.</p>
             
-            <h1 class="text-4xl font-black text-white mb-4 uppercase tracking-wider">Permisos</h1>
-            <p class="text-gray-300 text-lg mb-10 font-medium">Activa los sensores de tu teléfono para usar el nivelador.</p>
-            
-            <button id="startBtn" class="btn-massive w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-4xl py-10 px-4 rounded-3xl transition-colors uppercase tracking-widest border-4 border-yellow-200">
-                INICIAR NIVEL
+            <button id="startBtn" class="btn-massive w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-5xl py-12 rounded-[2.5rem] transition-colors uppercase tracking-widest border-8 border-yellow-200 shadow-2xl">
+                INICIAR<br>NIVEL
             </button>
         </div>
     </div>
@@ -64,14 +56,18 @@
 
             let width, height, cx, cy, maxDim;
 
-            // Vectores de gravedad objetivo (target) y suavizados (smooth)
-            let targetGx = 0, targetGy = 0, targetGz = 1;
-            let smoothGx = 0, smoothGy = 0, smoothGz = 1;
+            // Variables de gravedad (aceleración pura)
+            let rawX = 0, rawY = 0, rawZ = 9.8; 
+            let smoothX = 0, smoothY = 0, smoothZ = 9.8;
 
-            // Colores
-            const COLOR_BG = '#000000'; // Fondo Negro
-            const COLOR_LEVEL = '#22c55e'; // Verde Brillante
-            const COLOR_LIQUID = '#0ea5e9'; // Azul Líquido
+            // Filtro de paso bajo (Low-Pass Filter). Valores más pequeños = más suavizado.
+            const LPF_ALPHA = 0.15; 
+
+            // Colores temáticos
+            const COLOR_BG = '#0f172a'; // Slate 900
+            const COLOR_LIQUID = '#0ea5e9'; // Bright Blue (Sky 500)
+            const COLOR_TEXT_GOOD = '#22c55e'; // Green 500
+            const COLOR_TEXT_BAD = '#ef4444'; // Red 500
 
             // Ajustar el Canvas al tamaño de la pantalla
             function resize() {
@@ -82,70 +78,57 @@
                 ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
                 cx = width / 2;
                 cy = height / 2;
-                maxDim = Math.max(width, height);
+                maxDim = Math.max(width, height) * 1.5; // Suficiente para rotar sin esquinas cortadas
             }
             window.addEventListener('resize', resize);
             resize();
 
-            // FIX GIMBAL LOCK: Convertir ángulos de Euler a Vector 3D de Gravedad
-            function handleOrientation(event) {
-                let beta = event.beta || 0;
-                let gamma = event.gamma || 0;
+            // LECTOR DE GRAVEDAD DIRECTO (Evita Gimbal Lock)
+            function handleMotion(event) {
+                let acc = event.accelerationIncludingGravity;
+                if (!acc) return;
                 
-                // Convertir a radianes
-                let radBeta = beta * Math.PI / 180;
-                let radGamma = gamma * Math.PI / 180;
-
-                // 1. Calcular el vector de gravedad en el marco físico del dispositivo
-                // Estas fórmulas mapean la gravedad tridimensional evitando que el eje Z salte
-                let devGx = Math.sin(radGamma);
-                let devGy = Math.sin(radBeta) * Math.cos(radGamma);
-                let devGz = Math.cos(radBeta) * Math.cos(radGamma);
-
-                // 2. Compensar si el usuario gira la pantalla (Landscape/Portrait)
-                let orient = (window.orientation || 0) * Math.PI / 180;
-                
-                // Rotar el vector 2D (X e Y) basándonos en la orientación de la pantalla
-                targetGx = devGx * Math.cos(orient) + devGy * Math.sin(orient);
-                targetGy = -devGx * Math.sin(orient) + devGy * Math.cos(orient);
-                targetGz = devGz; // Z (profundidad) no cambia con la rotación de pantalla
+                // Mapear los ejes. Diferentes SO pueden invertir la Y, 
+                // pero por lo general, con el teléfono vertical X es izq/der, Y es arriba/abajo, Z es profundidad.
+                rawX = acc.x || 0;
+                rawY = acc.y || 0;
+                rawZ = acc.z || 0;
             }
 
-            // Iniciar aplicación
+            function startSensor() {
+                window.addEventListener('devicemotion', handleMotion, true);
+                overlay.style.display = 'none';
+                requestAnimationFrame(loop);
+            }
+
+            // Iniciar aplicación (Solicita permisos DeviceMotion en iOS)
             startBtn.addEventListener('click', () => {
-                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    DeviceOrientationEvent.requestPermission()
+                if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                    DeviceMotionEvent.requestPermission()
                         .then(permissionState => {
                             if (permissionState === 'granted') {
-                                window.addEventListener('deviceorientation', handleOrientation, true);
-                                overlay.style.display = 'none';
-                                requestAnimationFrame(loop);
+                                startSensor();
                             } else {
-                                alert("Permiso denegado. Se requieren los sensores.");
+                                alert("Permiso de sensores de movimiento denegado.");
                             }
                         })
                         .catch(console.error);
                 } else {
-                    window.addEventListener('deviceorientation', handleOrientation, true);
-                    overlay.style.display = 'none';
-                    requestAnimationFrame(loop);
+                    startSensor();
                 }
             });
 
-            // Bucle principal de animación
+            // Bucle principal de renderizado
             function loop() {
-                // Suavizar el movimiento del vector usando interpolación (Lerp)
-                // Se suavizan los vectores (X,Y,Z), no los ángulos, evitando así giros locos de 360°
-                smoothGx += (targetGx - smoothGx) * 0.15;
-                smoothGy += (targetGy - smoothGy) * 0.15;
-                smoothGz += (targetGz - smoothGz) * 0.15;
+                // Aplicar Filtro de Paso Bajo (Low-Pass Filter) para suavizar temblores
+                smoothX += (rawX - smoothX) * LPF_ALPHA;
+                smoothY += (rawY - smoothY) * LPF_ALPHA;
+                smoothZ += (rawZ - smoothZ) * LPF_ALPHA;
 
-                // Limpiar pantalla
                 ctx.clearRect(0, 0, width, height);
 
-                // Determinar el modo (Plano en la mesa vs Levantado)
-                // Si la gravedad en Z es muy fuerte (> 0.8), el teléfono está acostado
-                let isFlat = Math.abs(smoothGz) > 0.8;
+                // Determinar el modo: Si la fuerza G en Z es fuerte (> 8 m/s^2), el teléfono está apoyado en una mesa
+                let isFlat = Math.abs(smoothZ) > 8.0;
 
                 if (isFlat) {
                     drawFlatMode();
@@ -156,127 +139,140 @@
                 requestAnimationFrame(loop);
             }
 
+            // MODO BURBUJA (Acostado)
             function drawFlatMode() {
-                // Calcular pitch y roll desde el vector suavizado
-                let pitch = Math.atan2(smoothGy, Math.abs(smoothGz)) * 180 / Math.PI;
-                let roll = Math.atan2(smoothGx, Math.abs(smoothGz)) * 180 / Math.PI;
-                
-                let isLevel = Math.abs(pitch) < 1.0 && Math.abs(roll) < 1.0;
+                // La perfección se mide en cuán cerca están X e Y de 0.
+                let tiltX = smoothX;
+                let tiltY = -smoothY; // Invertimos Y para que la burbuja se mueva lógicamente
 
-                // Fondo
-                ctx.fillStyle = isLevel ? COLOR_LEVEL : COLOR_BG;
+                let exactnessThreshold = 0.3; // Tolerancia en m/s^2
+                let isLevel = Math.abs(tiltX) < exactnessThreshold && Math.abs(tiltY) < exactnessThreshold;
+
+                // Fondo negro
+                ctx.fillStyle = COLOR_BG;
                 ctx.fillRect(0, 0, width, height);
 
                 // Cruz central
-                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.2)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(cx, 0); ctx.lineTo(cx, height);
                 ctx.moveTo(0, cy); ctx.lineTo(width, cy);
                 ctx.stroke();
 
-                // Círculo límite
-                const radius = 80;
-                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)';
+                // Círculos objetivo
+                const targetRadius = 60;
+                ctx.strokeStyle = isLevel ? COLOR_TEXT_GOOD : 'rgba(255,255,255,0.6)';
                 ctx.lineWidth = 4;
                 ctx.beginPath();
-                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.arc(cx, cy, targetRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(cx, cy, targetRadius * 2.5, 0, Math.PI * 2);
                 ctx.stroke();
 
-                // Burbuja
-                let maxDist = Math.min(cx, cy) - radius;
-                let scale = maxDist / 30; 
-                let dx = roll * scale;
-                let dy = pitch * scale;
+                // Burbuja Líquida
+                let maxMove = Math.min(cx, cy) - targetRadius;
+                // Multiplicador de sensibilidad (gravedad máx esperada en ejes paralelos es ~2 cuando está plano)
+                let sensitivity = maxMove / 2.5; 
+                
+                let dx = tiltX * sensitivity;
+                let dy = tiltY * sensitivity;
 
-                ctx.fillStyle = isLevel ? 'rgba(0,0,0,0.8)' : COLOR_LIQUID;
+                ctx.fillStyle = COLOR_LIQUID;
                 ctx.beginPath();
-                ctx.arc(cx + dx, cy + dy, radius, 0, Math.PI * 2);
+                ctx.arc(cx + dx, cy + dy, targetRadius * 0.8, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Textos
-                ctx.fillStyle = isLevel ? '#000000' : '#ffffff';
+                // Texto Central 
+                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD;
+                ctx.font = '300 48px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-
-                let pStr = pitch.toFixed(1);
-                let rStr = roll.toFixed(1);
-                if (Math.abs(pitch) < 0.1) pStr = "0.0";
-                if (Math.abs(roll) < 0.1) rStr = "0.0";
-
-                ctx.font = '24px sans-serif';
-                ctx.fillText(`^`, cx, cy - 180);
-                ctx.font = '300 48px sans-serif';
-                ctx.fillText(`${pStr}°`, cx, cy - 130);
-                ctx.font = '24px sans-serif';
-                ctx.fillText(`v`, cx, cy - 90);
-                ctx.font = '300 48px sans-serif';
-                ctx.fillText(`< ${rStr}° >`, cx, cy + 130);
+                
+                // Mostrar ángulo en grados como referencia
+                let pitch = Math.atan2(smoothY, Math.abs(smoothZ)) * 180 / Math.PI;
+                let roll = Math.atan2(smoothX, Math.abs(smoothZ)) * 180 / Math.PI;
+                let combinedErr = Math.sqrt(pitch*pitch + roll*roll);
+                
+                let displayAngle = combinedErr.toFixed(1);
+                if (combinedErr < 0.1) displayAngle = "0.0";
+                
+                ctx.fillText(`${displayAngle}°`, cx, cy - targetRadius - 40);
+                
+                // Mostrar exactitud
+                ctx.font = '700 24px sans-serif';
+                ctx.fillText(isLevel ? "NIVELADO" : "DESNIVELADO", cx, cy + targetRadius + 50);
             }
 
+            // MODO LÍQUIDO (De pie / De lado)
             function drawEdgeMode() {
-                // Matemáticas Robustas: Usar atan2 con los vectores X e Y de gravedad
-                // Esto permite rotar 360 grados sin que el ángulo de un salto brusco jamás
-                let angle = Math.atan2(smoothGx, smoothGy) * 180 / Math.PI;
+                // Cálculo de horizonte perfecto usando Atan2 de los ejes Y y X (Vectores 2D de gravedad).
+                // Al ser vectores continuos, elimina completamente el problema de Gimbal Lock (saltos a 90/180).
+                let angleRad = Math.atan2(smoothX, smoothY); 
+                let angleDeg = angleRad * (180 / Math.PI);
+
+                // Calcular la desviación con respecto al ángulo de 90 grados más cercano
+                let nearestSnap = Math.round(angleDeg / 90) * 90;
+                let deviation = angleDeg - nearestSnap;
                 
-                // Calcular la desviación del ángulo recto más cercano (0, 90, 180, 270)
-                let nearestSnap = Math.round(angle / 90) * 90;
-                let deviation = angle - nearestSnap;
-                
-                // Está nivelado si la desviación es muy pequeña (< 0.5 grados)
+                // Está nivelado si el margen de error es menor a 0.5 grados
                 let isLevel = Math.abs(deviation) < 0.5;
 
-                ctx.fillStyle = isLevel ? COLOR_LEVEL : COLOR_BG;
+                // Fondo oscuro
+                ctx.fillStyle = COLOR_BG;
                 ctx.fillRect(0, 0, width, height);
 
-                if (!isLevel) {
-                    ctx.save();
-                    ctx.translate(cx, cy);
-                    // Rotar el lienzo en la dirección contraria al ángulo del teléfono
-                    ctx.rotate(-angle * Math.PI / 180);
-                    
-                    // Dibujar el líquido azul cubriendo la mitad inferior
-                    ctx.fillStyle = COLOR_LIQUID;
-                    ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
-                    
-                    // Línea del horizonte real
-                    ctx.strokeStyle = '#000000';
-                    ctx.lineWidth = 4;
-                    ctx.beginPath();
-                    ctx.moveTo(-maxDim, 0);
-                    ctx.lineTo(maxDim, 0);
-                    ctx.stroke();
-
-                    ctx.restore();
-                }
-
-                // Ticks marcadores en los bordes de la pantalla
-                ctx.strokeStyle = isLevel ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
+                ctx.save();
+                ctx.translate(cx, cy);
+                
+                // Rotar el canvas basándose en la dirección pura de la gravedad
+                ctx.rotate(angleRad);
+                
+                // Dibujar Líquido Azul gigante
+                ctx.fillStyle = COLOR_LIQUID;
+                ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
+                
+                // Dibujar Línea del horizonte (borde del líquido)
+                ctx.strokeStyle = '#ffffff';
                 ctx.lineWidth = 3;
                 ctx.beginPath();
-                ctx.moveTo(cx, 0); ctx.lineTo(cx, 40); 
-                ctx.moveTo(cx, height); ctx.lineTo(cx, height - 40);
-                ctx.moveTo(0, cy); ctx.lineTo(40, cy); 
-                ctx.moveTo(width, cy); ctx.lineTo(width - 40, cy); 
+                ctx.moveTo(-maxDim, 0);
+                ctx.lineTo(maxDim, 0);
                 ctx.stroke();
 
-                // Mostrar los grados exactos de desviación (como un nivel real)
+                ctx.restore();
+
+                // Ticks marcadores estáticos en la pantalla
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(cx - 30, cy); ctx.lineTo(cx + 30, cy); // Centro
+                ctx.moveTo(0, cy); ctx.lineTo(40, cy); // Borde izq
+                ctx.moveTo(width, cy); ctx.lineTo(width - 40, cy); // Borde der
+                ctx.moveTo(cx, 0); ctx.lineTo(cx, 40); // Borde sup
+                ctx.moveTo(cx, height); ctx.lineTo(cx, height - 40); // Borde inf
+                ctx.stroke();
+
+                // Formatear texto (Evitar -0.0)
                 let displayAngle = deviation.toFixed(1);
-                // Evitar el "0.0" o "-0.0" suelto
                 if (Math.abs(deviation) < 0.1) displayAngle = "0.0";
 
-                ctx.fillStyle = isLevel ? '#000000' : COLOR_LIQUID; 
-                ctx.font = '300 80px sans-serif';
+                // Renderizar Texto Flotante (Verde si exacto, Rojo si inexacto)
+                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD; 
+                ctx.font = '300 96px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 
-                if (!isLevel) {
-                    // Sombra para que se lea sobre fondos oscuros o claros
-                    ctx.shadowColor = "rgba(0,0,0,0.9)";
-                    ctx.shadowBlur = 10;
-                }
-                ctx.fillText(`${displayAngle}°`, cx, cy - 100);
+                ctx.shadowColor = "rgba(0,0,0,0.8)";
+                ctx.shadowBlur = 15;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 4;
+                
+                ctx.fillText(`${displayAngle}°`, cx, cy - 120);
                 ctx.shadowBlur = 0; 
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
             }
         };
     </script>
