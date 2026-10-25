@@ -3,306 +3,140 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Nivel Celular Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Nivel Pro</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            touch-action: none; 
-            user-select: none;
-            -webkit-user-select: none;
-            background-color: #0f172a; /* Fondo oscuro */
-            font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-        }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
-        }
-        @keyframes pulse-btn {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(250, 204, 21, 0.6); }
-            50% { transform: scale(1.03); box-shadow: 0 0 60px rgba(250, 204, 21, 0.9); }
-        }
-        .btn-massive {
-            animation: pulse-btn 1.5s infinite;
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #0f172a; font-family: sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #startBtn { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 20px 40px; font-size: 24px; font-weight: bold; background-color: #eab308; 
+            color: #000; border: none; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); z-index: 10;
         }
     </style>
 </head>
 <body>
 
-    <!-- OVERLAY DE INICIO (Botón Amarillo Masivo para Permisos) -->
-    <div id="overlay" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black px-4">
-        <div class="text-center w-full h-full flex flex-col justify-center max-w-lg mx-auto">
-            <h1 class="text-5xl font-black text-white mb-6 uppercase tracking-wider">Nivel Pro</h1>
-            <p class="text-gray-300 text-xl mb-12 font-medium px-4">Haz clic en el botón para activar los sensores y nivelar.</p>
-            
-            <button id="startBtn" class="btn-massive w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black text-5xl py-12 rounded-[2.5rem] transition-colors uppercase tracking-widest border-8 border-yellow-200 shadow-2xl">
-                INICIAR<br>NIVEL
-            </button>
-        </div>
-    </div>
-
-    <!-- LIENZO DEL NIVEL -->
-    <canvas id="canvas"></canvas>
+    <button id="startBtn">INICIAR NIVEL</button>
+    <canvas id="levelCanvas"></canvas>
 
     <script>
-        window.onload = function() {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const overlay = document.getElementById('overlay');
-            const startBtn = document.getElementById('startBtn');
+        const canvas = document.getElementById('levelCanvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
 
-            let width, height, cx, cy, maxDim;
+        let width, height;
+        let smoothGx = 0, smoothGy = 9.8; 
+        const filter = 0.15; // Filtro de paso bajo para suavizar el movimiento
 
-            // Variables de gravedad física cruda
-            let rawX = 0, rawY = 0, rawZ = 9.8; 
-            let smoothRawX = 0, smoothRawY = -9.8, smoothRawZ = 9.8;
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        window.addEventListener('resize', resize);
+        resize();
 
-            // Filtro de paso bajo (Low-Pass Filter) para suavizar
-            const LPF_ALPHA = 0.15; 
-
-            // Variables para el desenvolvimiento de ángulos infinitos y rotación
-            let currentOrientation = getOrientation();
-            let orientationOffset = currentOrientation; // Se inicializa con la rotación inicial del celular
-            let unwrappedScreenAngle = 0;
-            let prevRawScreenAngle = null;
-
-            // Colores temáticos exactos al video
-            const COLOR_BG = '#0f172a'; // Slate 900
-            const COLOR_LIQUID = '#0ea5e9'; // Azul claro
-            const COLOR_TEXT_GOOD = '#22c55e'; // Verde para nivelado
-            const COLOR_TEXT_BAD = '#ef4444'; // Rojo para desnivelado
-
-            function getOrientation() {
-                // Obtiene la rotación actual de la pantalla en grados (0, 90, -90, 180)
-                if (screen.orientation && screen.orientation.angle !== undefined) {
-                    let angle = screen.orientation.angle;
-                    if (angle === 270) return -90;
-                    return angle;
+        startBtn.addEventListener('click', async () => {
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const permissionState = await DeviceMotionEvent.requestPermission();
+                    if (permissionState === 'granted') {
+                        startBtn.style.display = 'none';
+                        window.addEventListener('devicemotion', handleMotion);
+                    } else {
+                        alert("Permiso denegado. Se requieren los sensores.");
+                    }
+                } catch (error) {
+                    console.error(error);
                 }
-                return window.orientation || 0;
+            } else {
+                startBtn.style.display = 'none';
+                window.addEventListener('devicemotion', handleMotion);
+            }
+        });
+
+        function handleMotion(event) {
+            let gx = event.accelerationIncludingGravity.x || 0;
+            let gy = event.accelerationIncludingGravity.y || 0;
+
+            // Ajuste automático por si la pantalla gira (landscape/portrait)
+            let orientation = screen.orientation ? screen.orientation.angle : window.orientation || 0;
+            if (orientation === 90) { let temp = gx; gx = -gy; gy = temp; }
+            else if (orientation === -90 || orientation === 270) { let temp = gx; gx = gy; gy = -temp; }
+            else if (orientation === 180) { gx = -gx; gy = -gy; }
+
+            // Suavizado del sensor
+            smoothGx = gx * filter + smoothGx * (1 - filter);
+            smoothGy = gy * filter + smoothGy * (1 - filter);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Fondo oscuro (donde van los números)
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, width, height);
+
+            // Calcular el ángulo matemático directo
+            // atan2(x, y) con Y invertido para que el teléfono vertical sea 0 grados.
+            let rawAngleRad = Math.atan2(smoothGx, -smoothGy);
+            
+            // Dibujar el líquido (claro)
+            ctx.save();
+            ctx.translate(width / 2, height / 2);
+            ctx.rotate(rawAngleRad); 
+            ctx.fillStyle = '#0ea5e9'; // Azul claro
+            // Dibuja un rectángulo gigante que cubre la mitad inferior
+            ctx.fillRect(-width * 2, 0, width * 4, height * 4);
+            
+            // Línea separadora blanca
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(-width * 2, 0);
+            ctx.lineTo(width * 2, 0);
+            ctx.stroke();
+            ctx.restore();
+
+            // Lógica del número en pantalla (Comportamiento de nivel de construcción)
+            let rawDegrees = rawAngleRad * (180 / Math.PI);
+            
+            // Invertir para que la derecha sea negativa y la izquierda positiva
+            let displayAngle = -rawDegrees; 
+
+            // Reducir el ángulo al rango de -45 a 45 grados
+            let modAngle = displayAngle % 90;
+            if (modAngle > 45) {
+                modAngle -= 90;
+            } else if (modAngle < -45) {
+                modAngle += 90;
             }
 
-            // Escuchar cuando el navegador gira la pantalla automáticamente
-            window.addEventListener('orientationchange', () => {
-                let newOrientation = getOrientation();
-                let delta = newOrientation - currentOrientation;
-                
-                // Normalizar el salto de rotación
-                if (delta > 180) delta -= 360;
-                if (delta < -180) delta += 360;
-                
-                // Sumar el giro del navegador a nuestro desfase para que el ángulo no se reinicie
-                orientationOffset += delta;
-                currentOrientation = newOrientation;
-                resize();
-            });
-
-            function resize() {
-                width = window.innerWidth;
-                height = window.innerHeight;
-                canvas.width = width * window.devicePixelRatio;
-                canvas.height = height * window.devicePixelRatio;
-                ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-                cx = width / 2;
-                cy = height / 2;
-                maxDim = Math.max(width, height) * 1.5; 
-            }
-            window.addEventListener('resize', resize);
-            resize();
-
-            // Lector de Gravedad
-            function handleMotion(event) {
-                let acc = event.accelerationIncludingGravity;
-                if (!acc) return;
-                
-                // Guardamos los valores crudos del hardware físico
-                rawX = acc.x || 0;
-                rawY = acc.y || 0;
-                rawZ = acc.z || 0;
+            // Redondear a un decimal
+            let finalNumber = modAngle.toFixed(1);
+            
+            // Si es exactamente 0.0, o -0.0, forzarlo a 0.0 positivo
+            if (finalNumber === "-0.0" || finalNumber === "0.0") {
+                finalNumber = "0.0";
             }
 
-            function startSensor() {
-                window.addEventListener('devicemotion', handleMotion, true);
-                overlay.style.display = 'none';
-                requestAnimationFrame(loop);
-            }
+            // Cambiar a verde si está perfectamente nivelado, si no, mantener rojo
+            let textColor = (finalNumber === "0.0") ? '#22c55e' : '#ef4444';
 
-            startBtn.addEventListener('click', () => {
-                if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-                    DeviceMotionEvent.requestPermission()
-                        .then(permissionState => {
-                            if (permissionState === 'granted') {
-                                startSensor();
-                            } else {
-                                alert("Permiso de sensores de movimiento denegado.");
-                            }
-                        })
-                        .catch(console.error);
-                } else {
-                    startSensor();
-                }
-            });
+            // Dibujar el texto
+            ctx.fillStyle = textColor;
+            ctx.font = 'bold 80px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Centrar el texto en la mitad superior de la pantalla
+            ctx.fillText(finalNumber + '°', width / 2, height / 3);
 
-            // Motor principal de renderizado
-            function loop() {
-                // 1. Suavizamos los datos crudos del hardware
-                smoothRawX += (rawX - smoothRawX) * LPF_ALPHA;
-                smoothRawY += (rawY - smoothRawY) * LPF_ALPHA;
-                smoothRawZ += (rawZ - smoothRawZ) * LPF_ALPHA;
+            requestAnimationFrame(draw);
+        }
 
-                // 2. Mapear los ejes físicos a la rotación actual de la pantalla
-                let sx, sy;
-                if (currentOrientation === 90) {
-                    sx = -smoothRawY; sy = smoothRawX;
-                } else if (currentOrientation === -90) {
-                    sx = smoothRawY; sy = -smoothRawX;
-                } else if (currentOrientation === 180) {
-                    sx = -smoothRawX; sy = -smoothRawY;
-                } else {
-                    sx = smoothRawX; sy = smoothRawY;
-                }
-
-                ctx.clearRect(0, 0, width, height);
-
-                // Si la gravedad jala fuerte en Z, el celular está acostado (Modo Burbuja)
-                let isFlat = Math.abs(smoothRawZ) > 8.0;
-
-                if (isFlat) {
-                    drawFlatMode(sx, sy);
-                } else {
-                    drawEdgeMode(sx, sy);
-                }
-
-                requestAnimationFrame(loop);
-            }
-
-            function drawEdgeMode(sx, sy) {
-                // Calcular ángulo en base a los ejes de la pantalla
-                // Usamos -sy porque la gravedad jala hacia abajo (negativo) cuando está derecho
-                let rawScreenAngle = Math.atan2(sx, -sy) * 180 / Math.PI;
-
-                // SISTEMA DE DESENVOLVIMIENTO (Memoria Infinita 360, 720, etc)
-                if (prevRawScreenAngle === null) {
-                    unwrappedScreenAngle = rawScreenAngle;
-                } else {
-                    let delta = rawScreenAngle - prevRawScreenAngle;
-                    // Evitar el salto de -180 a 180
-                    if (delta > 180) delta -= 360;
-                    if (delta < -180) delta += 360;
-                    unwrappedScreenAngle += delta;
-                }
-                prevRawScreenAngle = rawScreenAngle;
-
-                // El ángulo final mostrado es el ángulo infinito menos el giro que haya hecho el navegador
-                let displayAngle = unwrappedScreenAngle - orientationOffset;
-
-                // Lógica de "Perfección" para el color verde
-                // Comprobamos si está cerca de 0, 90, 180, 270, 360...
-                let isLevel = Math.abs(Math.round(displayAngle / 90) * 90 - displayAngle) < 0.15;
-
-                // Renderizar Fondo
-                ctx.fillStyle = COLOR_BG;
-                ctx.fillRect(0, 0, width, height);
-
-                // Dibujar Líquido con rotación directa a la pantalla
-                ctx.save();
-                ctx.translate(cx, cy);
-                
-                // Rotar el canvas (positivo es horario, hace que el agua se incline con la gravedad)
-                ctx.rotate(rawScreenAngle * Math.PI / 180);
-                
-                ctx.fillStyle = COLOR_LIQUID;
-                ctx.fillRect(-maxDim, 0, maxDim * 2, maxDim * 2);
-                
-                // Línea blanca del horizonte
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.moveTo(-maxDim, 0);
-                ctx.lineTo(maxDim, 0);
-                ctx.stroke();
-
-                ctx.restore();
-
-                // Ticks marcadores estáticos de precisión
-                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(0, cy); ctx.lineTo(60, cy); // Borde izq
-                ctx.moveTo(width, cy); ctx.lineTo(width - 60, cy); // Borde der
-                ctx.stroke();
-
-                // Formatear texto
-                let textAngle = displayAngle.toFixed(1);
-                // Evitar que diga "-0.0"
-                if (textAngle === "-0.0") textAngle = "0.0";
-
-                // Dibujar Texto del Ángulo
-                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD; 
-                ctx.font = '300 110px sans-serif'; // Fuente gigante y fina como en el video
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                ctx.fillText(`${textAngle}°`, cx, cy - 140);
-            }
-
-            // Modo Acostado (Mesa)
-            function drawFlatMode(sx, sy) {
-                let tiltX = sx;
-                let tiltY = -sy; 
-
-                let exactnessThreshold = 0.3; 
-                let isLevel = Math.abs(tiltX) < exactnessThreshold && Math.abs(tiltY) < exactnessThreshold;
-
-                ctx.fillStyle = COLOR_BG;
-                ctx.fillRect(0, 0, width, height);
-
-                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(cx, 0); ctx.lineTo(cx, height);
-                ctx.moveTo(0, cy); ctx.lineTo(width, cy);
-                ctx.stroke();
-
-                const targetRadius = 60;
-                ctx.strokeStyle = isLevel ? COLOR_TEXT_GOOD : 'rgba(255,255,255,0.6)';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.arc(cx, cy, targetRadius, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(cx, cy, targetRadius * 2.5, 0, Math.PI * 2);
-                ctx.stroke();
-
-                let maxMove = Math.min(cx, cy) - targetRadius;
-                let sensitivity = maxMove / 2.5; 
-                
-                let dx = tiltX * sensitivity;
-                let dy = tiltY * sensitivity;
-
-                ctx.fillStyle = COLOR_LIQUID;
-                ctx.beginPath();
-                ctx.arc(cx + dx, cy + dy, targetRadius * 0.8, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = isLevel ? COLOR_TEXT_GOOD : COLOR_TEXT_BAD;
-                ctx.font = '300 48px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                let combinedErr = Math.sqrt(sx*sx + sy*sy);
-                let displayAngle = (combinedErr * 5).toFixed(1); // Escala para mostrar grados aprox
-                if (combinedErr < 0.1) displayAngle = "0.0";
-                
-                ctx.fillText(`${displayAngle}°`, cx, cy - targetRadius - 40);
-                
-                ctx.font = '700 24px sans-serif';
-                ctx.fillText(isLevel ? "0.0°" : "MESA", cx, cy + targetRadius + 50);
-            }
-        };
+        draw();
     </script>
 </body>
 </html>
