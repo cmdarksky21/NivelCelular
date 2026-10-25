@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Nivel Pro</title>
+    <title>Nivel Pro - 3D</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #0f172a; font-family: sans-serif; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -25,8 +25,9 @@
         const startBtn = document.getElementById('startBtn');
 
         let width, height;
-        let smoothGx = 0, smoothGy = 9.8; 
-        const filter = 0.15; // Filtro de paso bajo para suavizar el movimiento
+        // Agregamos el eje Z para detectar cuando el teléfono está acostado
+        let smoothGx = 0, smoothGy = 9.8, smoothGz = 0; 
+        const filter = 0.15;
 
         function resize() {
             width = window.innerWidth;
@@ -59,79 +60,121 @@
         function handleMotion(event) {
             let gx = event.accelerationIncludingGravity.x || 0;
             let gy = event.accelerationIncludingGravity.y || 0;
+            let gz = event.accelerationIncludingGravity.z || 0;
 
-            // Ajuste automático por si la pantalla gira (landscape/portrait)
             let orientation = screen.orientation ? screen.orientation.angle : window.orientation || 0;
-            if (orientation === 90) { let temp = gx; gx = -gy; gy = temp; }
-            else if (orientation === -90 || orientation === 270) { let temp = gx; gx = gy; gy = -temp; }
-            else if (orientation === 180) { gx = -gx; gy = -gy; }
+            
+            // Corrección de giros de pantalla
+            let tempGx = gx, tempGy = gy;
+            if (orientation === 90) { gx = -tempGy; gy = tempGx; }
+            else if (orientation === -90 || orientation === 270) { gx = tempGy; gy = -tempGx; }
+            else if (orientation === 180) { gx = -tempGx; gy = -tempGy; }
 
-            // Suavizado del sensor
             smoothGx = gx * filter + smoothGx * (1 - filter);
             smoothGy = gy * filter + smoothGy * (1 - filter);
+            smoothGz = gz * filter + smoothGz * (1 - filter);
         }
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
 
-            // Fondo oscuro (donde van los números)
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, width, height);
+            // Si la gravedad principal recae en el eje Z (más de 6 m/s²), el celular está acostado
+            let isFlatMode = Math.abs(smoothGz) > 6.0;
 
-            // Calcular el ángulo matemático directo
-            // atan2(x, y) con Y invertido para que el teléfono vertical sea 0 grados.
-            let rawAngleRad = Math.atan2(smoothGx, -smoothGy);
-            
-            // Dibujar el líquido (claro)
-            ctx.save();
-            ctx.translate(width / 2, height / 2);
-            ctx.rotate(rawAngleRad); 
-            ctx.fillStyle = '#0ea5e9'; // Azul claro
-            // Dibuja un rectángulo gigante que cubre la mitad inferior
-            ctx.fillRect(-width * 2, 0, width * 4, height * 4);
-            
-            // Línea separadora blanca
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(-width * 2, 0);
-            ctx.lineTo(width * 2, 0);
-            ctx.stroke();
-            ctx.restore();
+            if (isFlatMode) {
+                // ==========================================
+                // MODO PLANO (Burbuja Circular 2D)
+                // ==========================================
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, width, height);
 
-            // Lógica del número en pantalla (Comportamiento de nivel de construcción)
-            let rawDegrees = rawAngleRad * (180 / Math.PI);
-            
-            // Invertir para que la derecha sea negativa y la izquierda positiva
-            let displayAngle = -rawDegrees; 
+                // Dibujar retícula central (cruz)
+                ctx.strokeStyle = '#334155';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(width/2, 0); ctx.lineTo(width/2, height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, height/2); ctx.lineTo(width, height/2); ctx.stroke();
 
-            // Reducir el ángulo al rango de -45 a 45 grados
-            let modAngle = displayAngle % 90;
-            if (modAngle > 45) {
-                modAngle -= 90;
-            } else if (modAngle < -45) {
-                modAngle += 90;
+                // Dibujar círculos objetivo
+                ctx.strokeStyle = '#475569';
+                ctx.beginPath(); ctx.arc(width/2, height/2, 30, 0, Math.PI*2); ctx.stroke();
+                ctx.beginPath(); ctx.arc(width/2, height/2, 100, 0, Math.PI*2); ctx.stroke();
+
+                // Calcular posición de la burbuja
+                let bubbleRadius = 25;
+                let multiplier = 20; 
+                let bX = smoothGx * multiplier;
+                let bY = -smoothGy * multiplier; 
+
+                // Calcular ángulo general de inclinación plana
+                let flatTiltRad = Math.atan2(Math.sqrt(smoothGx*smoothGx + smoothGy*smoothGy), Math.abs(smoothGz));
+                let flatDegrees = flatTiltRad * (180 / Math.PI);
+                let finalNumber = flatDegrees.toFixed(1);
+                if (finalNumber === "-0.0" || finalNumber === "0.0") finalNumber = "0.0";
+                
+                let textColor = (finalNumber === "0.0") ? '#22c55e' : '#ef4444';
+
+                // Dibujar la burbuja
+                ctx.fillStyle = '#0ea5e9';
+                ctx.beginPath(); 
+                ctx.arc(width/2 + bX, height/2 + bY, bubbleRadius, 0, Math.PI*2); 
+                ctx.fill();
+
+                // Texto de medición plana
+                ctx.fillStyle = textColor;
+                ctx.font = 'bold 60px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(finalNumber + '°', width/2, height/2 - 180);
+
+            } else {
+                // ==========================================
+                // MODO VERTICAL (Líquido y Bordes)
+                // ==========================================
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, width, height);
+
+                let rawAngleRad = Math.atan2(smoothGx, -smoothGy);
+                
+                ctx.save();
+                ctx.translate(width / 2, height / 2);
+                
+                // CORRECCIÓN INVERTIDA: Se agregó el signo negativo para girar contra la inclinación real
+                ctx.rotate(-rawAngleRad); 
+                
+                ctx.fillStyle = '#0ea5e9'; 
+                ctx.fillRect(-width * 2, 0, width * 4, height * 4);
+                
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(-width * 2, 0);
+                ctx.lineTo(width * 2, 0);
+                ctx.stroke();
+                ctx.restore();
+
+                let rawDegrees = rawAngleRad * (180 / Math.PI);
+                let displayAngle = -rawDegrees; 
+                let modAngle = displayAngle % 90;
+                
+                if (modAngle > 45) {
+                    modAngle -= 90;
+                } else if (modAngle < -45) {
+                    modAngle += 90;
+                }
+
+                let finalNumber = modAngle.toFixed(1);
+                if (finalNumber === "-0.0" || finalNumber === "0.0") {
+                    finalNumber = "0.0";
+                }
+
+                let textColor = (finalNumber === "0.0") ? '#22c55e' : '#ef4444';
+
+                ctx.fillStyle = textColor;
+                ctx.font = 'bold 80px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(finalNumber + '°', width / 2, height / 3);
             }
-
-            // Redondear a un decimal
-            let finalNumber = modAngle.toFixed(1);
-            
-            // Si es exactamente 0.0, o -0.0, forzarlo a 0.0 positivo
-            if (finalNumber === "-0.0" || finalNumber === "0.0") {
-                finalNumber = "0.0";
-            }
-
-            // Cambiar a verde si está perfectamente nivelado, si no, mantener rojo
-            let textColor = (finalNumber === "0.0") ? '#22c55e' : '#ef4444';
-
-            // Dibujar el texto
-            ctx.fillStyle = textColor;
-            ctx.font = 'bold 80px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            // Centrar el texto en la mitad superior de la pantalla
-            ctx.fillText(finalNumber + '°', width / 2, height / 3);
 
             requestAnimationFrame(draw);
         }
